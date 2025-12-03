@@ -1,7 +1,6 @@
 import type { Metadata } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
-import ThemeRegistry from '@/components/ThemeRegistry';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -14,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'EA Dashboard',
-  description: 'EA Dashboard with Next.js, MUI, and Twin.macro',
+  title: 'Stock Dashboard',
+  description: 'Stock Dashboard with Next.js and Tailwind CSS',
 };
 
 export default function RootLayout({
@@ -24,11 +23,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="th">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <ThemeRegistry>{children}</ThemeRegistry>
+        {children}
       </body>
     </html>
   );

@@ -1,0 +1,350 @@
+import { NextRequest, NextResponse } from 'next/server';
+
+// API Keys (optional - for higher rate limits)
+const FINNHUB_API_KEY = process.env.FINNHUB_API_KEY || 'demo';
+const TWELVE_DATA_API_KEY = process.env.TWELVE_DATA_API_KEY || 'demo';
+
+// ============ YAHOO FINANCE (Primary - No API key needed) ============
+async function yahooSearch(symbol: string) {
+  const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${symbol}&quotesCount=10&newsCount=0`;
+  const response = await fetch(url, {
+    headers: { 'User-Agent': 'Mozilla/5.0' },
+  });
+
+  if (!response.ok) throw new Error('Yahoo search failed');
+
+  const data = await response.json();
+  if (!data.quotes || data.quotes.length === 0) {
+    throw new Error('ไม่พบหุ้นที่ค้นหา');
+  }
+
+  const bestMatches = data.quotes
+    .filter((q: Record<string, string>) => q.symbol) // กรองเฉพาะที่มี symbol
+    .map((q: Record<string, string>) => ({
+      '1. symbol': q.symbol,
+      '2. name': q.shortname || q.longname || q.symbol,
+      '3. type': q.quoteType || 'Equity',
+      '4. region': q.exchange || 'US',
+      '8. currency': q.currency || 'USD',
+    }));
+
+  return { source: 'yahoo', bestMatches };
+}
+
+async function yahooQuote(symbol: string) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=1d`;
+  const response = await fetch(url, {
+    headers: { 'User-Agent': 'Mozilla/5.0' },
+  });
+
+  if (!response.ok) throw new Error('Yahoo quote failed');
+
+  const data = await response.json();
+  const result = data.chart?.result?.[0];
+  if (!result) throw new Error('ไม่พบข้อมูลหุ้น');
+
+  const meta = result.meta;
+  const quote = result.indicators?.quote?.[0];
+  const prevClose = meta.chartPreviousClose || meta.previousClose || meta.regularMarketPrice;
+  const price = meta.regularMarketPrice;
+  const change = price - prevClose;
+  const changePercent = prevClose ? (change / prevClose) * 100 : 0;
+
+  return {
+    source: 'yahoo',
+    'Global Quote': {
+      '01. symbol': symbol,
+      '02. open': quote?.open?.[0] || meta.regularMarketOpen || price,
+      '03. high': quote?.high?.[0] || meta.regularMarketDayHigh || price,
+      '04. low': quote?.low?.[0] || meta.regularMarketDayLow || price,
+      '05. price': price,
+      '06. volume': quote?.volume?.[0] || meta.regularMarketVolume || 0,
+      '07. latest trading day': new Date().toISOString().split('T')[0],
+      '08. previous close': prevClose,
+      '09. change': change.toFixed(4),
+      '10. change percent': changePercent.toFixed(4) + '%',
+    },
+  };
+}
+
+async function yahooTimeSeries(symbol: string, type: string) {
+  let range = '1mo';
+  let interval = '1d';
+
+  if (type === 'intraday') {
+    range = '1d';
+    interval = '5m';
+  } else if (type === 'daily') {
+    range = '3mo';
+    interval = '1d';
+  } else if (type === 'weekly') {
+    range = '1y';
+    interval = '1wk';
+  } else if (type === 'monthly') {
+    range = '5y';
+    interval = '1mo';
+  }
+
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=${interval}&range=${range}`;
+  const response = await fetch(url, {
+    headers: { 'User-Agent': 'Mozilla/5.0' },
+  });
+
+  if (!response.ok) throw new Error('Yahoo timeseries failed');
+
+  const data = await response.json();
+  const result = data.chart?.result?.[0];
+  if (!result) throw new Error('ไม่มีข้อมูลกราฟ');
+
+  const timestamps = result.timestamp || [];
+  const quotes = result.indicators?.quote?.[0] || {};
+
+  const timeSeries: Record<string, Record<string, string>> = {};
+  timestamps.forEach((ts: number, i: number) => {
+    const date = new Date(ts * 1000);
+    const dateStr =
+      type === 'intraday'
+        ? date.toISOString().replace('T', ' ').substring(0, 19)
+        : date.toISOString().split('T')[0];
+
+    if (quotes.close?.[i] !== null && quotes.close?.[i] !== undefined) {
+      timeSeries[dateStr] = {
+        '1. open': String(quotes.open?.[i] || 0),
+        '2. high': String(quotes.high?.[i] || 0),
+        '3. low': String(quotes.low?.[i] || 0),
+        '4. close': String(quotes.close?.[i] || 0),
+        '5. volume': String(quotes.volume?.[i] || 0),
+      };
+    }
+  });
+
+  let key = 'Time Series (Daily)';
+  if (type === 'intraday') key = 'Time Series (5min)';
+  else if (type === 'weekly') key = 'Weekly Time Series';
+  else if (type === 'monthly') key = 'Monthly Time Series';
+
+  return { source: 'yahoo', [key]: timeSeries };
+}
+
+// ============ FINNHUB (Backup) ============
+async function finnhubSearch(symbol: string) {
+  const url = `https://finnhub.io/api/v1/search?q=${symbol}&token=${FINNHUB_API_KEY}`;
+  const response = await fetch(url);
+
+  if (!response.ok) throw new Error('Finnhub search failed');
+
+  const data = await response.json();
+  if (!data.result || data.result.length === 0) {
+    throw new Error('Finnhub no results');
+  }
+
+  const bestMatches = data.result.map((r: Record<string, string>) => ({
+    '1. symbol': r.symbol,
+    '2. name': r.description,
+    '3. type': r.type || 'Equity',
+    '4. region': 'US',
+    '8. currency': 'USD',
+  }));
+
+  return { source: 'finnhub', bestMatches };
+}
+
+async function finnhubQuote(symbol: string) {
+  const url = `https://finnhub.io/api/v1/quote?symbol=${symbol}&token=${FINNHUB_API_KEY}`;
+  const response = await fetch(url);
+
+  if (!response.ok) throw new Error('Finnhub quote failed');
+
+  const data = await response.json();
+  if (!data.c || data.c === 0) throw new Error('Finnhub no data');
+
+  const change = data.c - data.pc;
+  const changePercent = data.pc ? (change / data.pc) * 100 : 0;
+
+  return {
+    source: 'finnhub',
+    'Global Quote': {
+      '01. symbol': symbol,
+      '02. open': data.o,
+      '03. high': data.h,
+      '04. low': data.l,
+      '05. price': data.c,
+      '06. volume': 0,
+      '07. latest trading day': new Date().toISOString().split('T')[0],
+      '08. previous close': data.pc,
+      '09. change': change.toFixed(4),
+      '10. change percent': changePercent.toFixed(4) + '%',
+    },
+  };
+}
+
+// ============ TWELVE DATA (Backup) ============
+async function twelveDataSearch(symbol: string) {
+  const url = `https://api.twelvedata.com/symbol_search?symbol=${symbol}&apikey=${TWELVE_DATA_API_KEY}`;
+  const response = await fetch(url);
+
+  if (!response.ok) throw new Error('Twelve Data search failed');
+
+  const data = await response.json();
+  if (!data.data || data.data.length === 0) {
+    throw new Error('Twelve Data no results');
+  }
+
+  const bestMatches = data.data.map((r: Record<string, string>) => ({
+    '1. symbol': r.symbol,
+    '2. name': r.instrument_name,
+    '3. type': r.instrument_type || 'Equity',
+    '4. region': r.exchange || 'US',
+    '8. currency': r.currency || 'USD',
+  }));
+
+  return { source: 'twelvedata', bestMatches };
+}
+
+async function twelveDataQuote(symbol: string) {
+  const url = `https://api.twelvedata.com/quote?symbol=${symbol}&apikey=${TWELVE_DATA_API_KEY}`;
+  const response = await fetch(url);
+
+  if (!response.ok) throw new Error('Twelve Data quote failed');
+
+  const data = await response.json();
+  if (data.code || !data.close) throw new Error('Twelve Data no data');
+
+  const change = parseFloat(data.change || '0');
+  const changePercent = parseFloat(data.percent_change || '0');
+
+  return {
+    source: 'twelvedata',
+    'Global Quote': {
+      '01. symbol': symbol,
+      '02. open': data.open,
+      '03. high': data.high,
+      '04. low': data.low,
+      '05. price': data.close,
+      '06. volume': data.volume || 0,
+      '07. latest trading day': data.datetime?.split(' ')[0] || new Date().toISOString().split('T')[0],
+      '08. previous close': data.previous_close,
+      '09. change': change.toFixed(4),
+      '10. change percent': changePercent.toFixed(4) + '%',
+    },
+  };
+}
+
+async function twelveDataTimeSeries(symbol: string, type: string) {
+  let interval = '1day';
+  let outputsize = 30;
+
+  if (type === 'intraday') {
+    interval = '5min';
+    outputsize = 78;
+  } else if (type === 'daily') {
+    interval = '1day';
+    outputsize = 100;
+  } else if (type === 'weekly') {
+    interval = '1week';
+    outputsize = 52;
+  } else if (type === 'monthly') {
+    interval = '1month';
+    outputsize = 60;
+  }
+
+  const url = `https://api.twelvedata.com/time_series?symbol=${symbol}&interval=${interval}&outputsize=${outputsize}&apikey=${TWELVE_DATA_API_KEY}`;
+  const response = await fetch(url);
+
+  if (!response.ok) throw new Error('Twelve Data timeseries failed');
+
+  const data = await response.json();
+  if (data.code || !data.values) throw new Error('Twelve Data no timeseries');
+
+  const timeSeries: Record<string, Record<string, string>> = {};
+  data.values.forEach((v: Record<string, string>) => {
+    timeSeries[v.datetime] = {
+      '1. open': v.open,
+      '2. high': v.high,
+      '3. low': v.low,
+      '4. close': v.close,
+      '5. volume': v.volume || '0',
+    };
+  });
+
+  let key = 'Time Series (Daily)';
+  if (type === 'intraday') key = 'Time Series (5min)';
+  else if (type === 'weekly') key = 'Weekly Time Series';
+  else if (type === 'monthly') key = 'Monthly Time Series';
+
+  return { source: 'twelvedata', [key]: timeSeries };
+}
+
+// ============ FALLBACK LOGIC ============
+async function tryWithFallback<T>(
+  providers: Array<() => Promise<T>>,
+  providerNames: string[]
+): Promise<T> {
+  let lastError: Error | null = null;
+
+  for (let i = 0; i < providers.length; i++) {
+    try {
+      const result = await providers[i]();
+      console.log(`✓ ${providerNames[i]}`);
+      return result;
+    } catch (error) {
+      console.log(`✗ ${providerNames[i]}: ${error instanceof Error ? error.message : error}`);
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  throw lastError || new Error('ไม่สามารถดึงข้อมูลได้');
+}
+
+export async function GET(request: NextRequest) {
+  const searchParams = request.nextUrl.searchParams;
+  const symbol = searchParams.get('symbol');
+  const type = searchParams.get('type') || 'quote';
+
+  if (!symbol) {
+    return NextResponse.json({ error: 'กรุณาระบุ symbol' }, { status: 400 });
+  }
+
+  try {
+    let data;
+
+    if (type === 'search') {
+      // ค้นหา: Yahoo -> Finnhub -> TwelveData
+      data = await tryWithFallback(
+        [
+          () => yahooSearch(symbol),
+          () => finnhubSearch(symbol),
+          () => twelveDataSearch(symbol),
+        ],
+        ['Yahoo', 'Finnhub', 'TwelveData']
+      );
+    } else if (type === 'quote') {
+      // ราคา: Yahoo -> Finnhub -> TwelveData
+      data = await tryWithFallback(
+        [
+          () => yahooQuote(symbol),
+          () => finnhubQuote(symbol),
+          () => twelveDataQuote(symbol),
+        ],
+        ['Yahoo', 'Finnhub', 'TwelveData']
+      );
+    } else {
+      // กราฟ: Yahoo -> TwelveData
+      data = await tryWithFallback(
+        [
+          () => yahooTimeSeries(symbol, type),
+          () => twelveDataTimeSeries(symbol, type),
+        ],
+        ['Yahoo', 'TwelveData']
+      );
+    }
+
+    return NextResponse.json(data);
+  } catch (error) {
+    console.error('API Error:', error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'ไม่สามารถดึงข้อมูลได้' },
+      { status: 500 }
+    );
+  }
+}
