@@ -189,7 +189,6 @@ export default function StockDetailContent({
       }
 
       if (!timeSeries || Object.keys(timeSeries).length === 0) {
-        console.log('No timeSeries data');
         throw new Error('ไม่มีข้อมูลกราฟ');
       }
 
@@ -231,8 +230,6 @@ export default function StockDetailContent({
       } else if (timeRange === '1Y') {
         filteredData = chartData.slice(-52);
       }
-
-      console.log('Chart data:', filteredData.length, 'points');
 
       // Update chart
       if (seriesRef.current && filteredData.length > 0) {
@@ -288,7 +285,6 @@ export default function StockDetailContent({
       chartRef.current = chart;
       seriesRef.current = series;
       setChartReady(true);
-      console.log('Chart created successfully');
 
       // Resize handler
       const handleResize = () => {

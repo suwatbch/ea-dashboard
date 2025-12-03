@@ -45,7 +45,8 @@ async function yahooQuote(symbol: string) {
 
   const meta = result.meta;
   const quote = result.indicators?.quote?.[0];
-  const prevClose = meta.chartPreviousClose || meta.previousClose || meta.regularMarketPrice;
+  const prevClose =
+    meta.chartPreviousClose || meta.previousClose || meta.regularMarketPrice;
   const price = meta.regularMarketPrice;
   const change = price - prevClose;
   const changePercent = prevClose ? (change / prevClose) * 100 : 0;
@@ -222,7 +223,8 @@ async function twelveDataQuote(symbol: string) {
       '04. low': data.low,
       '05. price': data.close,
       '06. volume': data.volume || 0,
-      '07. latest trading day': data.datetime?.split(' ')[0] || new Date().toISOString().split('T')[0],
+      '07. latest trading day':
+        data.datetime?.split(' ')[0] || new Date().toISOString().split('T')[0],
       '08. previous close': data.previous_close,
       '09. change': change.toFixed(4),
       '10. change percent': changePercent.toFixed(4) + '%',
@@ -285,10 +287,8 @@ async function tryWithFallback<T>(
   for (let i = 0; i < providers.length; i++) {
     try {
       const result = await providers[i]();
-      console.log(`✓ ${providerNames[i]}`);
       return result;
     } catch (error) {
-      console.log(`✗ ${providerNames[i]}: ${error instanceof Error ? error.message : error}`);
       lastError = error instanceof Error ? error : new Error(String(error));
     }
   }
@@ -343,7 +343,9 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error('API Error:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'ไม่สามารถดึงข้อมูลได้' },
+      {
+        error: error instanceof Error ? error.message : 'ไม่สามารถดึงข้อมูลได้',
+      },
       { status: 500 }
     );
   }
