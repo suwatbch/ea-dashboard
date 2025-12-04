@@ -2,9 +2,9 @@
 FROM node:20-alpine AS deps
 WORKDIR /app
 
-# Install dependencies
+# Install dependencies (suppress warnings and notices)
 COPY package.json package-lock.json* ./
-RUN npm ci --legacy-peer-deps
+RUN npm ci --legacy-peer-deps --loglevel=error --no-update-notifier
 
 # Stage 2: Builder
 FROM node:20-alpine AS builder
