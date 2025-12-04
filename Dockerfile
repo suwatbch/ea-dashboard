@@ -10,6 +10,9 @@ RUN npm ci --legacy-peer-deps --loglevel=error --no-update-notifier
 FROM node:20-alpine AS builder
 WORKDIR /app
 
+# Suppress npm update notices
+ENV NPM_CONFIG_UPDATE_NOTIFIER=false
+
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
