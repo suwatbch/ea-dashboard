@@ -48,6 +48,8 @@ import {
   Skeleton,
   Tooltip,
   Fade,
+  ToggleButton,
+  ToggleButtonGroup,
 } from '@mui/material';
 import {
   Search as SearchIcon,
@@ -59,6 +61,7 @@ import {
   BookmarkBorder as BookmarkBorderIcon,
   ShowChart as ShowChartIcon,
   DragIndicator as DragIndicatorIcon,
+  CurrencyExchange as CurrencyExchangeIcon,
 } from '@mui/icons-material';
 import { useWatchlist } from '@/hooks/useWatchlist';
 import { SearchResult, WatchlistItem, StockQuote } from '@/types/stock';
@@ -464,13 +467,55 @@ export default function DashboardContent() {
         minHeight: '100vh',
         background:
           'linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%)',
-        py: { xs: 2, sm: 4 },
-        px: { xs: 2, sm: 3 },
+        p: 3,
       }}
     >
       <Container maxWidth="lg">
         {/* Header */}
         <Box sx={{ mb: 4, textAlign: 'center' }}>
+          {/* Navigation Toggle */}
+          <Box sx={{ mb: 3 }}>
+            <ToggleButtonGroup
+              value="stock"
+              exclusive
+              onChange={(_, value) => {
+                if (value === 'forex') {
+                  router.push('/forex');
+                }
+              }}
+              sx={{
+                bgcolor: 'rgba(26, 26, 46, 0.95)',
+                border: '1px solid rgba(233, 69, 96, 0.3)',
+                borderRadius: 2,
+                '& .MuiToggleButton-root': {
+                  color: '#94a3b8',
+                  border: 'none',
+                  px: 3,
+                  py: 1,
+                  '&.Mui-selected': {
+                    bgcolor: 'rgba(233, 69, 96, 0.2)',
+                    color: '#e94560',
+                    '&:hover': {
+                      bgcolor: 'rgba(233, 69, 96, 0.3)',
+                    },
+                  },
+                  '&:hover': {
+                    bgcolor: 'rgba(255, 255, 255, 0.05)',
+                  },
+                },
+              }}
+            >
+              <ToggleButton value="stock">
+                <ShowChartIcon sx={{ mr: 1 }} />
+                Stock
+              </ToggleButton>
+              <ToggleButton value="forex">
+                <CurrencyExchangeIcon sx={{ mr: 1 }} />
+                Forex
+              </ToggleButton>
+            </ToggleButtonGroup>
+          </Box>
+
           <Box
             sx={{
               display: 'flex',
