@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile
     container_name: stock-dashboard
     ports:
-      - '4000:80'
+      - '127.0.0.1:4000:80'
     restart: always
     environment:
       - NODE_ENV=production
