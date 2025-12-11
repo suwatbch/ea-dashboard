@@ -456,18 +456,18 @@ export default function StockDetailContent({
         width: chartContainerRef.current.clientWidth,
         height: chartHeight,
         crosshair: {
-          mode: isMobileView ? 0 : 1, // Mobile: Magnet mode, Desktop: Normal mode
+          mode: 0, // Magnet mode for both mobile and desktop
           vertLine: {
             visible: true,
-            labelVisible: !isMobileView, // Hide time label on mobile
+            labelVisible: false, // Hide time label - use custom tooltip
             style: 3, // Dashed line
             width: 1,
             color: 'rgba(255, 255, 255, 0.3)',
             labelBackgroundColor: '#6366f1',
           },
           horzLine: {
-            visible: !isMobileView, // Hide horizontal line on mobile
-            labelVisible: !isMobileView,
+            visible: false, // Hide horizontal line
+            labelVisible: false, // Hide price label on right
             style: 3,
             width: 1,
             color: 'rgba(255, 255, 255, 0.3)',
@@ -486,8 +486,8 @@ export default function StockDetailContent({
           secondsVisible: false,
         },
         rightPriceScale: {
-          visible: !isMobileView, // Hide price scale on mobile
-          borderColor: isMobileView ? 'transparent' : CHART_COLORS.border,
+          visible: false, // Hide price scale on both mobile and desktop
+          borderColor: 'transparent',
         },
         localization: {
           locale: 'en-US',
@@ -510,8 +510,8 @@ export default function StockDetailContent({
         bottomColor: `${CHART_COLORS.highlight}10`,
         lineColor: CHART_COLORS.highlight,
         lineWidth: 2,
-        lastValueVisible: !isMobileView, // Hide last value line on mobile
-        priceLineVisible: !isMobileView, // Hide price line on mobile
+        lastValueVisible: false, // Hide last value marker
+        priceLineVisible: false, // Hide price line
       });
 
       chartRef.current = chart;
@@ -711,6 +711,153 @@ export default function StockDetailContent({
         });
       }
 
+      // Handle mouse events for desktop
+      if (!isMobileView && chartContainerRef.current) {
+        const chartContainer = chartContainerRef.current;
+
+        const findPriceAtTimeDesktop = (
+          targetTime: Time
+        ): { price: number; index: number } | null => {
+          const data = series.data();
+          if (!data || data.length === 0) return null;
+
+          let targetTimeNum: number;
+          if (typeof targetTime === 'number') {
+            targetTimeNum = targetTime;
+          } else if (typeof targetTime === 'string') {
+            targetTimeNum = new Date(targetTime).getTime() / 1000;
+          } else {
+            const bd = targetTime as {
+              year: number;
+              month: number;
+              day: number;
+            };
+            targetTimeNum =
+              new Date(bd.year, bd.month - 1, bd.day).getTime() / 1000;
+          }
+
+          let closestIndex = 0;
+          let minDiff = Infinity;
+
+          for (let i = 0; i < data.length; i++) {
+            const item = data[i];
+            let itemTimeNum: number;
+            if (typeof item.time === 'number') {
+              itemTimeNum = item.time;
+            } else if (typeof item.time === 'string') {
+              itemTimeNum = new Date(item.time).getTime() / 1000;
+            } else {
+              const bd = item.time as {
+                year: number;
+                month: number;
+                day: number;
+              };
+              itemTimeNum =
+                new Date(bd.year, bd.month - 1, bd.day).getTime() / 1000;
+            }
+
+            const diff = Math.abs(itemTimeNum - targetTimeNum);
+            if (diff < minDiff) {
+              minDiff = diff;
+              closestIndex = i;
+            }
+          }
+
+          const closestItem = data[closestIndex];
+          if (closestItem && 'value' in closestItem) {
+            return {
+              price: (closestItem as { value: number }).value,
+              index: closestIndex,
+            };
+          }
+          return null;
+        };
+
+        const monthNames = [
+          'ม.ค.',
+          'ก.พ.',
+          'มี.ค.',
+          'เม.ย.',
+          'พ.ค.',
+          'มิ.ย.',
+          'ก.ค.',
+          'ส.ค.',
+          'ก.ย.',
+          'ต.ค.',
+          'พ.ย.',
+          'ธ.ค.',
+        ];
+
+        const handleMouseMove = (e: MouseEvent) => {
+          const bcr = chartContainer.getBoundingClientRect();
+          const x = e.clientX - bcr.left;
+          const y = e.clientY - bcr.top;
+
+          const time = chart.timeScale().coordinateToTime(x);
+
+          if (time !== null) {
+            const price = series.coordinateToPrice(y);
+            if (price !== null) {
+              chart.setCrosshairPosition(price, time, series);
+            }
+
+            const result = findPriceAtTimeDesktop(time);
+            if (result) {
+              const priceY = series.priceToCoordinate(result.price);
+              if (priceY !== null) {
+                setTouchPrice(result.price);
+                setTouchPosition({
+                  x: x,
+                  y: priceY,
+                  chartWidth: bcr.width,
+                  chartHeight: bcr.height,
+                });
+
+                // Format time
+                let timeStr = '';
+                if (typeof time === 'number') {
+                  const date = new Date(time * 1000);
+                  const hours = date.getUTCHours();
+                  const minutes = date.getUTCMinutes();
+                  const day = date.getUTCDate();
+                  const month = date.getUTCMonth();
+                  timeStr = `${day} ${monthNames[month]} ${hours
+                    .toString()
+                    .padStart(2, '0')}:${minutes
+                    .toString()
+                    .padStart(2, '0')} น.`;
+                } else if (typeof time === 'string') {
+                  const date = new Date(time);
+                  const day = date.getDate();
+                  const month = date.getMonth();
+                  const year = date.getFullYear() + 543;
+                  timeStr = `${day} ${monthNames[month]} ${year}`;
+                } else {
+                  const bd = time as {
+                    year: number;
+                    month: number;
+                    day: number;
+                  };
+                  const year = bd.year + 543;
+                  timeStr = `${bd.day} ${monthNames[bd.month - 1]} ${year}`;
+                }
+                setTouchTime(timeStr);
+              }
+            }
+          }
+        };
+
+        const handleMouseLeave = () => {
+          chart.clearCrosshairPosition();
+          setTouchPrice(null);
+          setTouchTime(null);
+          setTouchPosition(null);
+        };
+
+        chartContainer.addEventListener('mousemove', handleMouseMove);
+        chartContainer.addEventListener('mouseleave', handleMouseLeave);
+      }
+
       const handleResize = () => {
         if (chartContainerRef.current && chartRef.current) {
           const newIsMobile = window.innerWidth < 600;
@@ -738,15 +885,15 @@ export default function StockDetailContent({
               },
             },
             rightPriceScale: {
-              visible: !newIsMobile,
+              visible: false,
             },
             crosshair: {
               vertLine: {
-                labelVisible: !newIsMobile,
+                labelVisible: false,
               },
               horzLine: {
-                visible: !newIsMobile,
-                labelVisible: !newIsMobile,
+                visible: false,
+                labelVisible: false,
               },
             },
           });
@@ -1828,6 +1975,110 @@ export default function StockDetailContent({
                   <CircularProgress sx={{ color: '#e94560' }} />
                 </Box>
               )}
+
+              {/* Price Tooltip - Desktop */}
+              {touchPrice !== null &&
+                touchPosition !== null &&
+                (() => {
+                  const tooltipWidth = 90;
+                  const padding = 8;
+                  const chartWidth = touchPosition.chartWidth;
+
+                  let tooltipX = touchPosition.x;
+                  let translateX = '-50%';
+
+                  if (touchPosition.x < tooltipWidth / 2 + padding) {
+                    tooltipX = padding;
+                    translateX = '0%';
+                  } else if (
+                    touchPosition.x >
+                    chartWidth - tooltipWidth / 2 - padding
+                  ) {
+                    tooltipX = chartWidth - padding;
+                    translateX = '-100%';
+                  }
+
+                  return (
+                    <Box
+                      sx={{
+                        position: 'absolute',
+                        left: tooltipX,
+                        top: touchPosition.y,
+                        transform: `translate(${translateX}, -100%)`,
+                        background:
+                          'linear-gradient(135deg, rgba(144, 144, 144, 0.95) 0%, rgba(148, 148, 148, 0.95) 100%)',
+                        color: 'black',
+                        px: 1,
+                        py: 0.4,
+                        borderRadius: '5px',
+                        fontSize: '0.75rem',
+                        fontWeight: 900,
+                        boxShadow:
+                          '0 4px 20px rgba(99, 102, 241, 0.4), 0 0 0 1px rgba(255,255,255,0.1)',
+                        pointerEvents: 'none',
+                        zIndex: 10,
+                        whiteSpace: 'nowrap',
+                        marginTop: '-12px',
+                        backdropFilter: 'blur(4px)',
+                        border: '1px solid rgba(255,255,255,0.2)',
+                        letterSpacing: '0.5px',
+                      }}
+                    >
+                      ${formatNumber(touchPrice)}
+                    </Box>
+                  );
+                })()}
+
+              {/* Time Tooltip - Desktop */}
+              {touchTime !== null &&
+                touchPosition !== null &&
+                (() => {
+                  const tooltipWidth = 120;
+                  const padding = 8;
+                  const chartWidth = touchPosition.chartWidth;
+                  const chartHeight = touchPosition.chartHeight;
+
+                  let tooltipX = touchPosition.x;
+                  let translateX = '-50%';
+
+                  if (touchPosition.x < tooltipWidth / 2 + padding) {
+                    tooltipX = padding;
+                    translateX = '0%';
+                  } else if (
+                    touchPosition.x >
+                    chartWidth - tooltipWidth / 2 - padding
+                  ) {
+                    tooltipX = chartWidth - padding;
+                    translateX = '-100%';
+                  }
+
+                  return (
+                    <Box
+                      sx={{
+                        position: 'absolute',
+                        left: tooltipX,
+                        top: chartHeight - 25,
+                        transform: `translateX(${translateX})`,
+                        background:
+                          'linear-gradient(135deg, rgba(99, 102, 241, 0.95) 0%, rgba(107, 101, 233, 0.95) 100%)',
+                        color: 'white',
+                        px: 1,
+                        py: 0.3,
+                        borderRadius: '5px',
+                        fontSize: '0.7rem',
+                        fontWeight: 600,
+                        boxShadow: '0 2px 10px rgba(0,0,0,0.3)',
+                        pointerEvents: 'none',
+                        zIndex: 10,
+                        whiteSpace: 'nowrap',
+                        backdropFilter: 'blur(4px)',
+                        border: '1px solid rgba(255,255,255,0.2)',
+                      }}
+                    >
+                      {touchTime}
+                    </Box>
+                  );
+                })()}
             </Box>
           </Paper>
         </Box>
