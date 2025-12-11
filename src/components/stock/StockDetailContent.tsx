@@ -67,6 +67,16 @@ export default function StockDetailContent({
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Area'> | null>(null);
 
+  // State สำหรับ tooltip แสดงราคาและเวลาเมื่อ touch
+  const [touchPrice, setTouchPrice] = useState<number | null>(null);
+  const [touchTime, setTouchTime] = useState<string | null>(null);
+  const [touchPosition, setTouchPosition] = useState<{
+    x: number;
+    y: number;
+    chartWidth: number;
+    chartHeight: number;
+  } | null>(null);
+
   const [stockData, setStockData] = useState<StockQuote | null>(null);
   const [loading, setLoading] = useState(true);
   const [chartLoading, setChartLoading] = useState(false);
@@ -422,7 +432,7 @@ export default function StockDetailContent({
       // Responsive chart height
       const isMobileView = window.innerWidth < 600;
       const chartHeight = isMobileView
-        ? Math.max(300, window.innerHeight - 350) // Mobile: flexible height
+        ? Math.max(220, window.innerHeight - 450) // Mobile: smaller height
         : 400; // Desktop: fixed
 
       const chart = createChart(chartContainerRef.current, {
@@ -446,16 +456,18 @@ export default function StockDetailContent({
         width: chartContainerRef.current.clientWidth,
         height: chartHeight,
         crosshair: {
-          mode: 1, // Normal mode - follows mouse/touch
+          mode: isMobileView ? 0 : 1, // Mobile: Magnet mode, Desktop: Normal mode
           vertLine: {
-            labelVisible: true,
+            visible: true,
+            labelVisible: !isMobileView, // Hide time label on mobile
             style: 3, // Dashed line
             width: 1,
             color: 'rgba(255, 255, 255, 0.3)',
             labelBackgroundColor: '#6366f1',
           },
           horzLine: {
-            labelVisible: true,
+            visible: !isMobileView, // Hide horizontal line on mobile
+            labelVisible: !isMobileView,
             style: 3,
             width: 1,
             color: 'rgba(255, 255, 255, 0.3)',
@@ -474,18 +486,22 @@ export default function StockDetailContent({
           secondsVisible: false,
         },
         rightPriceScale: {
+          visible: !isMobileView, // Hide price scale on mobile
           borderColor: isMobileView ? 'transparent' : CHART_COLORS.border,
         },
         localization: {
-          locale: 'th-TH',
+          locale: 'en-US',
           timeFormatter: (timestamp: number) => {
+            // แปลง timestamp เป็นเวลาไทย (UTC+7)
             const date = new Date(timestamp * 1000);
-            return date.toLocaleTimeString('th-TH', {
-              timeZone: 'Asia/Bangkok',
-              hour: '2-digit',
-              minute: '2-digit',
-            });
+            const hours = date.getUTCHours() + 7;
+            const adjustedHours = hours >= 24 ? hours - 24 : hours;
+            const minutes = date.getUTCMinutes();
+            return `${adjustedHours.toString().padStart(2, '0')}:${minutes
+              .toString()
+              .padStart(2, '0')} น.`;
           },
+          dateFormat: 'MMM yy',
         },
       });
 
@@ -494,17 +510,212 @@ export default function StockDetailContent({
         bottomColor: `${CHART_COLORS.highlight}10`,
         lineColor: CHART_COLORS.highlight,
         lineWidth: 2,
+        lastValueVisible: !isMobileView, // Hide last value line on mobile
+        priceLineVisible: !isMobileView, // Hide price line on mobile
       });
 
       chartRef.current = chart;
       seriesRef.current = series;
       setChartReady(true);
 
+      // Handle touch events for mobile - show crosshair immediately on touch/move
+      let touchHandlers: {
+        start: (e: TouchEvent) => void;
+        move: (e: TouchEvent) => void;
+        end: (e: TouchEvent) => void;
+      } | null = null;
+
+      if (isMobileView && chartContainerRef.current) {
+        const chartContainer = chartContainerRef.current;
+
+        const findPriceAtTime = (
+          targetTime: Time
+        ): { price: number; index: number } | null => {
+          const data = series.data();
+          if (!data || data.length === 0) return null;
+
+          // Convert target time to number for comparison
+          let targetTimeNum: number;
+          if (typeof targetTime === 'number') {
+            targetTimeNum = targetTime;
+          } else if (typeof targetTime === 'string') {
+            targetTimeNum = new Date(targetTime).getTime() / 1000;
+          } else {
+            // BusinessDay type: { year, month, day }
+            const bd = targetTime as {
+              year: number;
+              month: number;
+              day: number;
+            };
+            targetTimeNum =
+              new Date(bd.year, bd.month - 1, bd.day).getTime() / 1000;
+          }
+
+          // Find closest data point
+          let closestIndex = 0;
+          let minDiff = Infinity;
+
+          for (let i = 0; i < data.length; i++) {
+            const item = data[i];
+            let itemTimeNum: number;
+            if (typeof item.time === 'number') {
+              itemTimeNum = item.time;
+            } else if (typeof item.time === 'string') {
+              itemTimeNum = new Date(item.time).getTime() / 1000;
+            } else {
+              const bd = item.time as {
+                year: number;
+                month: number;
+                day: number;
+              };
+              itemTimeNum =
+                new Date(bd.year, bd.month - 1, bd.day).getTime() / 1000;
+            }
+
+            const diff = Math.abs(itemTimeNum - targetTimeNum);
+            if (diff < minDiff) {
+              minDiff = diff;
+              closestIndex = i;
+            }
+          }
+
+          const closestItem = data[closestIndex];
+          if (closestItem && 'value' in closestItem) {
+            return {
+              price: (closestItem as { value: number }).value,
+              index: closestIndex,
+            };
+          }
+          return null;
+        };
+
+        const updateCrosshair = (touchX: number, touchY: number) => {
+          const bcr = chartContainer.getBoundingClientRect();
+          const x = touchX - bcr.left;
+          const y = touchY - bcr.top;
+
+          // Convert pixel coordinates to time
+          const time = chart.timeScale().coordinateToTime(x);
+
+          if (time !== null) {
+            // Get any price to set crosshair (it will snap to actual data point in magnet mode)
+            const price = series.coordinateToPrice(y);
+            if (price !== null) {
+              chart.setCrosshairPosition(price, time, series);
+            }
+
+            // Find actual price at this time from series data
+            const result = findPriceAtTime(time);
+            if (result) {
+              const priceY = series.priceToCoordinate(result.price);
+              if (priceY !== null) {
+                setTouchPrice(result.price);
+                setTouchPosition({
+                  x: x,
+                  y: priceY,
+                  chartWidth: bcr.width,
+                  chartHeight: bcr.height,
+                });
+
+                // Format time for display
+                const monthNames = [
+                  'ม.ค.',
+                  'ก.พ.',
+                  'มี.ค.',
+                  'เม.ย.',
+                  'พ.ค.',
+                  'มิ.ย.',
+                  'ก.ค.',
+                  'ส.ค.',
+                  'ก.ย.',
+                  'ต.ค.',
+                  'พ.ย.',
+                  'ธ.ค.',
+                ];
+
+                let timeStr = '';
+                if (typeof time === 'number') {
+                  // Unix timestamp - data ถูก +7 ชม. ไว้แล้วตอน parse
+                  // ดังนั้นใช้ UTC time ตรงๆ ได้เลย (เพราะเป็นเวลาไทยแล้ว)
+                  const date = new Date(time * 1000);
+                  const hours = date.getUTCHours();
+                  const minutes = date.getUTCMinutes();
+                  const day = date.getUTCDate();
+                  const month = date.getUTCMonth();
+                  timeStr = `${day} ${monthNames[month]} ${hours
+                    .toString()
+                    .padStart(2, '0')}:${minutes
+                    .toString()
+                    .padStart(2, '0')} น.`;
+                } else if (typeof time === 'string') {
+                  // Date string
+                  const date = new Date(time);
+                  const day = date.getDate();
+                  const month = date.getMonth();
+                  const year = date.getFullYear() + 543; // พ.ศ.
+                  timeStr = `${day} ${monthNames[month]} ${year}`;
+                } else {
+                  // BusinessDay
+                  const bd = time as {
+                    year: number;
+                    month: number;
+                    day: number;
+                  };
+                  const year = bd.year + 543; // พ.ศ.
+                  timeStr = `${bd.day} ${monthNames[bd.month - 1]} ${year}`;
+                }
+                setTouchTime(timeStr);
+              }
+            }
+          }
+        };
+
+        const handleTouchStart = (e: TouchEvent) => {
+          e.preventDefault();
+          const touch = e.touches[0];
+          updateCrosshair(touch.clientX, touch.clientY);
+        };
+
+        const handleTouchMove = (e: TouchEvent) => {
+          e.preventDefault();
+          const touch = e.touches[0];
+          updateCrosshair(touch.clientX, touch.clientY);
+        };
+
+        const handleTouchEnd = (e: TouchEvent) => {
+          e.preventDefault();
+          // Clear crosshair and tooltip when touch ends
+          chart.clearCrosshairPosition();
+          setTouchPrice(null);
+          setTouchTime(null);
+          setTouchPosition(null);
+        };
+
+        touchHandlers = {
+          start: handleTouchStart,
+          move: handleTouchMove,
+          end: handleTouchEnd,
+        };
+
+        chartContainer.addEventListener('touchstart', handleTouchStart, {
+          passive: false,
+        });
+        chartContainer.addEventListener('touchmove', handleTouchMove, {
+          passive: false,
+        });
+        chartContainer.addEventListener('touchend', handleTouchEnd, {
+          passive: false,
+        });
+        chartContainer.addEventListener('touchcancel', handleTouchEnd, {
+          passive: false,
+        });
+      }
+
       const handleResize = () => {
         if (chartContainerRef.current && chartRef.current) {
           const newIsMobile = window.innerWidth < 600;
           const newChartHeight = newIsMobile
-            ? Math.max(300, window.innerHeight - 350)
+            ? Math.max(220, window.innerHeight - 450)
             : 400;
           chartRef.current.applyOptions({
             width: chartContainerRef.current.clientWidth,
@@ -526,6 +737,18 @@ export default function StockDetailContent({
                   : CHART_COLORS.border,
               },
             },
+            rightPriceScale: {
+              visible: !newIsMobile,
+            },
+            crosshair: {
+              vertLine: {
+                labelVisible: !newIsMobile,
+              },
+              horzLine: {
+                visible: !newIsMobile,
+                labelVisible: !newIsMobile,
+              },
+            },
           });
         }
       };
@@ -534,6 +757,15 @@ export default function StockDetailContent({
 
       return () => {
         window.removeEventListener('resize', handleResize);
+
+        // Cleanup touch event listeners
+        if (touchHandlers && chartContainerRef.current) {
+          const chartContainer = chartContainerRef.current;
+          chartContainer.removeEventListener('touchstart', touchHandlers.start);
+          chartContainer.removeEventListener('touchmove', touchHandlers.move);
+          chartContainer.removeEventListener('touchend', touchHandlers.end);
+          chartContainer.removeEventListener('touchcancel', touchHandlers.end);
+        }
       };
     }, 100);
 
@@ -844,7 +1076,7 @@ export default function StockDetailContent({
           sx={{
             position: 'relative',
             flex: 1,
-            minHeight: 300,
+            minHeight: 220,
           }}
         >
           <Box
@@ -852,7 +1084,7 @@ export default function StockDetailContent({
             sx={{
               width: '100%',
               height: '100%',
-              minHeight: 300,
+              minHeight: 220,
             }}
           />
           {chartLoading && (
@@ -869,6 +1101,118 @@ export default function StockDetailContent({
               <CircularProgress sx={{ color: '#22c55e' }} />
             </Box>
           )}
+
+          {/* Price Tooltip - แสดงเมื่อ touch */}
+          {touchPrice !== null &&
+            touchPosition !== null &&
+            (() => {
+              // คำนวณตำแหน่ง tooltip ให้ไม่ออกนอกขอบ
+              const tooltipWidth = 90; // ความกว้างโดยประมาณของ tooltip
+              const padding = 8; // ระยะห่างจากขอบ
+              const chartWidth = touchPosition.chartWidth;
+
+              let tooltipX = touchPosition.x;
+              let translateX = '-50%'; // ค่าเริ่มต้น: อยู่ตรงกลาง
+
+              // ถ้าติดขอบซ้าย
+              if (touchPosition.x < tooltipWidth / 2 + padding) {
+                tooltipX = padding;
+                translateX = '0%';
+              }
+              // ถ้าติดขอบขวา
+              else if (
+                touchPosition.x >
+                chartWidth - tooltipWidth / 2 - padding
+              ) {
+                tooltipX = chartWidth - padding;
+                translateX = '-100%';
+              }
+
+              return (
+                <Box
+                  sx={{
+                    position: 'absolute',
+                    left: tooltipX,
+                    top: touchPosition.y,
+                    transform: `translate(${translateX}, -100%)`,
+                    background:
+                      'linear-gradient(135deg, rgba(144, 144, 144, 0.95) 0%, rgba(148, 148, 148, 0.95) 100%)',
+                    color: 'black',
+                    px: 1,
+                    py: 0.4,
+                    borderRadius: '5px',
+                    fontSize: '0.75rem',
+                    fontWeight: 900,
+                    boxShadow:
+                      '0 4px 20px rgba(99, 102, 241, 0.4), 0 0 0 1px rgba(255,255,255,0.1)',
+                    pointerEvents: 'none',
+                    zIndex: 10,
+                    whiteSpace: 'nowrap',
+                    marginTop: '-12px',
+                    backdropFilter: 'blur(4px)',
+                    border: '1px solid rgba(255,255,255,0.2)',
+                    letterSpacing: '0.5px',
+                  }}
+                >
+                  ${formatNumber(touchPrice)}
+                </Box>
+              );
+            })()}
+
+          {/* Time Tooltip - แสดงเวลาเมื่อ touch */}
+          {touchTime !== null &&
+            touchPosition !== null &&
+            (() => {
+              // คำนวณตำแหน่ง tooltip ให้ไม่ออกนอกขอบ
+              const tooltipWidth = 120; // ความกว้างโดยประมาณของ time tooltip
+              const padding = 8;
+              const chartWidth = touchPosition.chartWidth;
+              const chartHeight = touchPosition.chartHeight;
+
+              let tooltipX = touchPosition.x;
+              let translateX = '-50%';
+
+              // ถ้าติดขอบซ้าย
+              if (touchPosition.x < tooltipWidth / 2 + padding) {
+                tooltipX = padding;
+                translateX = '0%';
+              }
+              // ถ้าติดขอบขวา
+              else if (
+                touchPosition.x >
+                chartWidth - tooltipWidth / 2 - padding
+              ) {
+                tooltipX = chartWidth - padding;
+                translateX = '-100%';
+              }
+
+              return (
+                <Box
+                  sx={{
+                    position: 'absolute',
+                    left: tooltipX,
+                    top: chartHeight - 25,
+                    transform: `translateX(${translateX})`,
+                    background:
+                      'linear-gradient(135deg, rgba(99, 102, 241, 0.95) 0%, rgba(107, 101, 233, 0.95) 100%)',
+                    color: 'white',
+                    px: 1,
+                    py: 0.3,
+                    borderRadius: '5px',
+                    fontSize: '0.7rem',
+                    fontWeight: 600,
+                    boxShadow: '0 2px 10px rgba(0,0,0,0.3)',
+                    pointerEvents: 'none',
+                    zIndex: 10,
+                    whiteSpace: 'nowrap',
+                    backdropFilter: 'blur(4px)',
+                    border: '1px solid rgba(255,255,255,0.2)',
+                  }}
+                >
+                  {touchTime}
+                </Box>
+              );
+            })()}
         </Box>
 
         {/* Time Range Buttons */}
