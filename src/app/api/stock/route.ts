@@ -95,14 +95,18 @@ async function yahooTimeSeries(symbol: string, type: string) {
   if (type === 'intraday') {
     range = '1d';
     interval = '5m';
+  } else if (type === 'intraday5d') {
+    // ข้อมูลรายชั่วโมงสำหรับ 5D - ให้เห็นความผันผวนมากขึ้น
+    range = '5d';
+    interval = '60m'; // 1 ชั่วโมง
   } else if (type === 'daily') {
-    range = '2y'; // เพิ่มจาก 3mo เป็น 2y เพื่อให้ได้ data points มากขึ้น
+    range = '5y'; // ใช้ 5y สำหรับข้อมูลรายวัน (max จะคืนข้อมูลเป็น monthly)
     interval = '1d';
   } else if (type === 'weekly') {
-    range = '5y'; // เพิ่มจาก 1y เป็น 5y
+    range = 'max'; // เพิ่มเป็น max สำหรับข้อมูลระยะยาว
     interval = '1wk';
   } else if (type === 'monthly') {
-    range = 'max'; // เพิ่มเป็น max
+    range = 'max'; // ใช้ max สำหรับข้อมูลทั้งหมด
     interval = '1mo';
   }
 
@@ -141,6 +145,7 @@ async function yahooTimeSeries(symbol: string, type: string) {
 
   let key = 'Time Series (Daily)';
   if (type === 'intraday') key = 'Time Series (5min)';
+  else if (type === 'intraday5d') key = 'Time Series (60min)';
   else if (type === 'weekly') key = 'Weekly Time Series';
   else if (type === 'monthly') key = 'Monthly Time Series';
 

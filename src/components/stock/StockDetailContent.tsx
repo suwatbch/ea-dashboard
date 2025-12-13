@@ -32,6 +32,9 @@ import {
   TrendingUp as TrendingUpIcon,
   TrendingDown as TrendingDownIcon,
   AccessTime as AccessTimeIcon,
+  Fullscreen as FullscreenIcon,
+  FullscreenExit as FullscreenExitIcon,
+  Close as CloseIcon,
 } from '@mui/icons-material';
 import { useWatchlist } from '@/hooks/useWatchlist';
 import { StockQuote, TimeRange } from '@/types/stock';
@@ -65,8 +68,12 @@ export default function StockDetailContent({
     useWatchlist();
 
   const chartContainerRef = useRef<HTMLDivElement>(null);
+  const fullscreenChartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  const fullscreenChartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Area'> | null>(null);
+  const fullscreenSeriesRef = useRef<ISeriesApi<'Area'> | null>(null);
+  const timeRangeRef = useRef<TimeRange>('1D'); // ref สำหรับใช้ใน chart localization
 
   // State สำหรับ tooltip แสดงราคาและเวลาเมื่อ touch
   const [touchPrice, setTouchPrice] = useState<number | null>(null);
@@ -89,6 +96,8 @@ export default function StockDetailContent({
   const [apiSource, setApiSource] = useState<string>('Yahoo Finance');
   const [mounted, setMounted] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [fullscreenChartReady, setFullscreenChartReady] = useState(false);
 
   // State สำหรับ change ตามช่วงเวลาที่เลือก
   const [periodChange, setPeriodChange] = useState<number>(0);
@@ -309,9 +318,22 @@ export default function StockDetailContent({
   const fetchChartData = useCallback(async () => {
     try {
       setChartLoading(true);
-      // ใช้ daily data สำหรับทุกช่วงเวลา (ยกเว้น 1D ใช้ intraday) เพื่อให้กราฟถี่ขึ้น
+      // อัพเดท ref สำหรับใช้ใน chart localization
+      timeRangeRef.current = timeRange;
+
+      // เลือก type ตามช่วงเวลา
+      // - 1D: intraday (5min intervals)
+      // - 5D: intraday5d (60min intervals) - รายชั่วโมงเพื่อให้เห็นความผันผวน
+      // - 1M, 6M, 1Y, 5Y: daily
+      // - ALL: weekly (เพื่อให้ได้ข้อมูลย้อนหลังมากกว่า 5 ปี)
       let type = 'daily';
-      if (timeRange === '1D') type = 'intraday';
+      if (timeRange === '1D') {
+        type = 'intraday';
+      } else if (timeRange === '5D') {
+        type = 'intraday5d'; // ข้อมูลรายชั่วโมง 5 วัน
+      } else if (timeRange === 'ALL') {
+        type = 'weekly'; // ใช้ weekly สำหรับ ALL เพื่อให้ได้ข้อมูล max
+      }
 
       const response = await fetch(`/api/stock?symbol=${symbol}&type=${type}`);
       const data = await response.json();
@@ -324,6 +346,10 @@ export default function StockDetailContent({
       let timeSeries: Record<string, Record<string, string>>;
       if (type === 'intraday') {
         timeSeries = data['Time Series (5min)'];
+      } else if (type === 'intraday5d') {
+        timeSeries = data['Time Series (60min)'];
+      } else if (type === 'weekly') {
+        timeSeries = data['Weekly Time Series'];
       } else {
         timeSeries = data['Time Series (Daily)'];
       }
@@ -336,23 +362,22 @@ export default function StockDetailContent({
       }
 
       // Convert to chart data
-      // lightweight-charts displays timestamps as UTC, so we need to add local timezone offset
-      // to make it display as Thai time (UTC+7)
+      // ใช้ timestamp สำหรับทุก type เพื่อให้ timeFormatter ทำงานได้
       const chartData: AreaData<Time>[] = Object.entries(timeSeries)
         .map(([date, values]) => {
-          let timeValue: Time;
-          if (type === 'intraday') {
-            // Parse date and add Thai timezone offset (7 hours) for chart display
+          let timestamp: number;
+          if (type === 'intraday' || type === 'intraday5d') {
+            // Parse datetime and add Thai timezone offset (7 hours) for chart display
             const parsedDate = new Date(date.replace(' ', 'T') + 'Z');
             const thaiOffset = 7 * 60 * 60; // 7 hours in seconds
-            const timestamp =
-              Math.floor(parsedDate.getTime() / 1000) + thaiOffset;
-            timeValue = timestamp as Time;
+            timestamp = Math.floor(parsedDate.getTime() / 1000) + thaiOffset;
           } else {
-            timeValue = date as Time;
+            // Daily/Weekly: parse date string to timestamp
+            const parsedDate = new Date(date + 'T00:00:00Z');
+            timestamp = Math.floor(parsedDate.getTime() / 1000);
           }
           return {
-            time: timeValue,
+            time: timestamp as Time,
             value: parseFloat(values['4. close'] || '0'),
           };
         })
@@ -364,22 +389,31 @@ export default function StockDetailContent({
           return (a.time as string).localeCompare(b.time as string);
         });
 
-      // Filter data based on timeRange - ใช้ daily data จึงมีจุดข้อมูลมากขึ้น
+      // Filter data based on timeRange
+      // หมายเหตุ: ใช้ trading days (วันทำการ) ไม่ใช่ calendar days
+      // 1 ปี ≈ 252 วันทำการ, 1 เดือน ≈ 21 วันทำการ
+      // Intraday: ~78 intervals per day (5min intervals for 6.5 hours)
       let filteredData = chartData;
       if (timeRange === '1D') {
         filteredData = chartData.slice(-78); // 5min intervals for 1 day
-      } else if (timeRange === '1W') {
-        filteredData = chartData.slice(-7); // 7 days
+      } else if (timeRange === '5D') {
+        // ใช้ข้อมูลรายชั่วโมง 5 วัน (ประมาณ 5 x 7 = 35 ชั่วโมงต่อวัน x 5 = ~40 จุดข้อมูล)
+        filteredData = chartData; // ใช้ทั้งหมดที่ API ส่งมา
       } else if (timeRange === '1M') {
-        filteredData = chartData.slice(-30); // ~30 days
-      } else if (timeRange === '3M') {
-        filteredData = chartData.slice(-90); // ~90 days (ก่อนหน้า: 13 weeks)
+        filteredData = chartData.slice(-21); // ~21 วันทำการ (1 เดือน)
+      } else if (timeRange === '6M') {
+        filteredData = chartData.slice(-126); // ~126 วันทำการ (6 เดือน)
       } else if (timeRange === '1Y') {
-        filteredData = chartData.slice(-365); // ~365 days (ก่อนหน้า: 52 weeks)
+        filteredData = chartData.slice(-252); // ~252 วันทำการ (1 ปี)
+      } else if (timeRange === '5Y') {
+        filteredData = chartData.slice(-252 * 5); // ~1260 วันทำการ (5 ปี)
+      } else if (timeRange === 'ALL') {
+        // ALL ใช้ weekly data - จำกัดไม่เกิน 10 ปี (52 สัปดาห์ x 10 = 520)
+        filteredData = chartData.slice(-520);
       }
 
       // Update chart
-      if (seriesRef.current && filteredData.length > 0) {
+      if (filteredData.length > 0) {
         // ตรวจสอบทิศทางราคา: จุดเริ่มต้น vs จุดสุดท้าย
         const firstPrice = filteredData[0]?.value || 0;
         const lastPrice = filteredData[filteredData.length - 1]?.value || 0;
@@ -395,8 +429,7 @@ export default function StockDetailContent({
         setPeriodChangePercent(changePercent);
         setPeriodIsPositive(isUptrend);
 
-        // เปลี่ยนสีตามทิศทาง (เขียวถ้าขึ้น, แดงถ้าลง)
-        seriesRef.current.applyOptions({
+        const chartOptions = {
           lineColor: isUptrend ? CHART_COLORS.success : CHART_COLORS.danger,
           topColor: isUptrend
             ? 'rgba(34, 197, 94, 0.4)'
@@ -404,10 +437,73 @@ export default function StockDetailContent({
           bottomColor: isUptrend
             ? 'rgba(34, 197, 94, 0.05)'
             : 'rgba(239, 68, 68, 0.05)',
-        });
+        };
 
-        seriesRef.current.setData(filteredData);
-        chartRef.current?.timeScale().fitContent();
+        // คำนวณ barSpacing ที่เหมาะสมตามจำนวนข้อมูลและความกว้างของ chart
+        const dataLength = filteredData.length;
+        const chartWidth = chartContainerRef.current?.clientWidth || 800;
+
+        // คำนวณ barSpacing แบบ dynamic เพื่อให้เต็มพื้นที่
+        // สูตร: (chartWidth - padding) / dataLength
+        let barSpacing = Math.floor(
+          (chartWidth - 40) / Math.max(dataLength, 1)
+        );
+
+        // จำกัด barSpacing ไม่ให้มากหรือน้อยเกินไป
+        if (barSpacing > 150) barSpacing = 150;
+        if (barSpacing < 3) barSpacing = 3;
+
+        // Update main chart
+        if (seriesRef.current) {
+          seriesRef.current.applyOptions(chartOptions);
+          seriesRef.current.setData(filteredData);
+
+          // ปรับ time scale settings ตามจำนวนข้อมูล
+          chartRef.current?.timeScale().applyOptions({
+            barSpacing: barSpacing,
+            rightOffset: 0, // ไม่เว้นที่ว่างด้านขวา
+          });
+
+          // บังคับ re-render time scale เพื่อให้ timeFormatter ใช้ค่า timeRange ใหม่
+          chartRef.current?.timeScale().fitContent();
+          // Force redraw โดยการ scroll เล็กน้อยแล้วกลับมา
+          const timeScale = chartRef.current?.timeScale();
+          if (timeScale) {
+            const currentRange = timeScale.getVisibleLogicalRange();
+            if (currentRange) {
+              timeScale.setVisibleLogicalRange({
+                from: currentRange.from - 0.001,
+                to: currentRange.to + 0.001,
+              });
+              setTimeout(() => {
+                timeScale.fitContent();
+              }, 10);
+            }
+          }
+        }
+
+        // Update fullscreen chart if active
+        if (fullscreenSeriesRef.current) {
+          fullscreenSeriesRef.current.applyOptions(chartOptions);
+          fullscreenSeriesRef.current.setData(filteredData);
+
+          // คำนวณ barSpacing สำหรับ fullscreen
+          const fullscreenWidth =
+            fullscreenChartContainerRef.current?.clientWidth ||
+            window.innerWidth;
+          let fullscreenBarSpacing = Math.floor(
+            (fullscreenWidth - 40) / Math.max(dataLength, 1)
+          );
+          if (fullscreenBarSpacing > 150) fullscreenBarSpacing = 150;
+          if (fullscreenBarSpacing < 3) fullscreenBarSpacing = 3;
+
+          // ปรับ time scale สำหรับ fullscreen ด้วย
+          fullscreenChartRef.current?.timeScale().applyOptions({
+            barSpacing: fullscreenBarSpacing,
+            rightOffset: 0,
+          });
+          fullscreenChartRef.current?.timeScale().fitContent();
+        }
       }
     } catch (err) {
       console.error('Chart error:', err);
@@ -426,7 +522,7 @@ export default function StockDetailContent({
       // Responsive chart height
       const isMobileView = window.innerWidth < 600;
       const chartHeight = isMobileView
-        ? Math.max(220, window.innerHeight - 450) // Mobile: smaller height
+        ? Math.max(280, window.innerHeight - 400) // Mobile: เพิ่ม height เพื่อให้มีที่ว่างสำหรับ time scale + labels
         : 400; // Desktop: fixed
 
       const chart = createChart(chartContainerRef.current, {
@@ -475,14 +571,20 @@ export default function StockDetailContent({
           mouse: false,
         },
         timeScale: {
-          borderColor: isMobileView ? 'transparent' : CHART_COLORS.border,
+          visible: true, // แสดง time scale ทั้ง desktop และ mobile
+          borderColor: isMobileView
+            ? 'rgba(255,255,255,0.15)'
+            : CHART_COLORS.border,
           timeVisible: true,
           secondsVisible: false,
-          tickMarkMaxCharacterLength: 10,
+          tickMarkMaxCharacterLength: isMobileView ? 8 : 10,
           fixLeftEdge: true,
           fixRightEdge: true,
           ticksVisible: true,
-          uniformDistribution: true,
+          uniformDistribution: false, // ปิด uniform เพื่อให้แสดง label ได้ดีขึ้น
+          minimumHeight: 28, // height สำหรับ time scale
+          rightOffset: 5,
+          barSpacing: isMobileView ? 2 : 6,
         },
         rightPriceScale: {
           visible: false, // Hide price scale on both mobile and desktop
@@ -491,16 +593,46 @@ export default function StockDetailContent({
         localization: {
           locale: 'en-US',
           timeFormatter: (timestamp: number) => {
-            // แปลง timestamp เป็นเวลาไทย (UTC+7)
+            // ใช้ timeRangeRef เพื่อ format ตามช่วงเวลาที่เลือก
             const date = new Date(timestamp * 1000);
-            const hours = date.getUTCHours() + 7;
-            const adjustedHours = hours >= 24 ? hours - 24 : hours;
-            const minutes = date.getUTCMinutes();
-            return `${adjustedHours.toString().padStart(2, '0')}:${minutes
-              .toString()
-              .padStart(2, '0')} น.`;
+            const currentRange = timeRangeRef.current;
+            const monthNames = [
+              'Jan',
+              'Feb',
+              'Mar',
+              'Apr',
+              'May',
+              'Jun',
+              'Jul',
+              'Aug',
+              'Sep',
+              'Oct',
+              'Nov',
+              'Dec',
+            ];
+
+            if (currentRange === '1D') {
+              // แสดงเวลา: 09:30, 10:00
+              const hours = date.getUTCHours() + 7;
+              const adjustedHours = hours >= 24 ? hours - 24 : hours;
+              const minutes = date.getUTCMinutes();
+              return `${adjustedHours.toString().padStart(2, '0')}:${minutes
+                .toString()
+                .padStart(2, '0')}`;
+            } else if (currentRange === '5D' || currentRange === '1M') {
+              // แสดงวันที่: Dec 9
+              const day = date.getUTCDate();
+              const month = monthNames[date.getUTCMonth()];
+              return `${month} ${day}`;
+            } else if (currentRange === '6M' || currentRange === '1Y') {
+              // แสดงเดือน: Jul
+              return monthNames[date.getUTCMonth()];
+            } else {
+              // 5Y, ALL - แสดงปี: 2023
+              return date.getUTCFullYear().toString();
+            }
           },
-          dateFormat: 'MMM yy',
+          dateFormat: 'dd MMM yyyy', // fallback format
         },
       });
 
@@ -861,7 +993,7 @@ export default function StockDetailContent({
         if (chartContainerRef.current && chartRef.current) {
           const newIsMobile = window.innerWidth < 600;
           const newChartHeight = newIsMobile
-            ? Math.max(220, window.innerHeight - 450)
+            ? Math.max(280, window.innerHeight - 400)
             : 400;
           chartRef.current.applyOptions({
             width: chartContainerRef.current.clientWidth,
@@ -931,6 +1063,162 @@ export default function StockDetailContent({
     };
   }, []);
 
+  // สร้าง Fullscreen Chart
+  useEffect(() => {
+    if (!isFullscreen || !fullscreenChartContainerRef.current) {
+      // Cleanup fullscreen chart when closing
+      if (fullscreenChartRef.current) {
+        fullscreenChartRef.current.remove();
+        fullscreenChartRef.current = null;
+        fullscreenSeriesRef.current = null;
+        setFullscreenChartReady(false);
+      }
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      if (!fullscreenChartContainerRef.current || fullscreenChartRef.current)
+        return;
+
+      const chartHeight = window.innerHeight - 120; // Full height minus header/controls
+
+      const chart = createChart(fullscreenChartContainerRef.current, {
+        layout: {
+          background: { color: '#0a0a0a' },
+          textColor: CHART_COLORS.textSecondary,
+          attributionLogo: false,
+        },
+        grid: {
+          vertLines: { color: 'rgba(255,255,255,0.08)' },
+          horzLines: { color: 'rgba(255,255,255,0.08)' },
+        },
+        width: fullscreenChartContainerRef.current.clientWidth,
+        height: chartHeight,
+        crosshair: {
+          mode: 0,
+          vertLine: {
+            visible: true,
+            labelVisible: true,
+            style: 3,
+            width: 1,
+            color: 'rgba(255, 255, 255, 0.4)',
+            labelBackgroundColor: '#6366f1',
+          },
+          horzLine: {
+            visible: true,
+            labelVisible: true,
+            style: 3,
+            width: 1,
+            color: 'rgba(255, 255, 255, 0.4)',
+            labelBackgroundColor: '#6366f1',
+          },
+        },
+        handleScroll: true,
+        handleScale: true,
+        timeScale: {
+          visible: true,
+          borderColor: 'rgba(255,255,255,0.2)',
+          timeVisible: true,
+          secondsVisible: false,
+          fixLeftEdge: true,
+          fixRightEdge: true,
+          ticksVisible: true,
+          minimumHeight: 36,
+          rightOffset: 10,
+          barSpacing: 8,
+        },
+        rightPriceScale: {
+          visible: true,
+          borderColor: 'rgba(255,255,255,0.2)',
+          scaleMargins: {
+            top: 0.1,
+            bottom: 0.1,
+          },
+        },
+        localization: {
+          locale: 'en-US',
+          timeFormatter: (timestamp: number) => {
+            const date = new Date(timestamp * 1000);
+            const currentRange = timeRangeRef.current;
+            const monthNames = [
+              'Jan',
+              'Feb',
+              'Mar',
+              'Apr',
+              'May',
+              'Jun',
+              'Jul',
+              'Aug',
+              'Sep',
+              'Oct',
+              'Nov',
+              'Dec',
+            ];
+
+            if (currentRange === '1D') {
+              const hours = date.getUTCHours() + 7;
+              const adjustedHours = hours >= 24 ? hours - 24 : hours;
+              const minutes = date.getUTCMinutes();
+              return `${adjustedHours.toString().padStart(2, '0')}:${minutes
+                .toString()
+                .padStart(2, '0')}`;
+            } else if (currentRange === '5D' || currentRange === '1M') {
+              const day = date.getUTCDate();
+              const month = monthNames[date.getUTCMonth()];
+              return `${month} ${day}`;
+            } else if (currentRange === '6M' || currentRange === '1Y') {
+              return monthNames[date.getUTCMonth()];
+            } else {
+              return date.getUTCFullYear().toString();
+            }
+          },
+          dateFormat: 'dd MMM yyyy',
+        },
+      });
+
+      const series = chart.addSeries(AreaSeries, {
+        topColor: `${CHART_COLORS.highlight}80`,
+        bottomColor: `${CHART_COLORS.highlight}10`,
+        lineColor: CHART_COLORS.highlight,
+        lineWidth: 2,
+        lastValueVisible: true,
+        priceLineVisible: true,
+      });
+
+      fullscreenChartRef.current = chart;
+      fullscreenSeriesRef.current = series;
+      setFullscreenChartReady(true);
+
+      // Handle resize
+      const handleResize = () => {
+        if (fullscreenChartContainerRef.current && fullscreenChartRef.current) {
+          const newHeight = window.innerHeight - 120;
+          fullscreenChartRef.current.applyOptions({
+            width: fullscreenChartContainerRef.current.clientWidth,
+            height: newHeight,
+          });
+        }
+      };
+
+      window.addEventListener('resize', handleResize);
+
+      return () => {
+        window.removeEventListener('resize', handleResize);
+      };
+    }, 100);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [isFullscreen]);
+
+  // โหลด fullscreen chart data เมื่อพร้อม
+  useEffect(() => {
+    if (fullscreenChartReady) {
+      fetchChartData();
+    }
+  }, [fullscreenChartReady, fetchChartData]);
+
   // โหลดข้อมูลเมื่อเริ่ม
   useEffect(() => {
     fetchStockData();
@@ -955,7 +1243,7 @@ export default function StockDetailContent({
   };
 
   const isPositive = stockData ? stockData.change >= 0 : true;
-  const timeRanges: TimeRange[] = ['1D', '1W', '1M', '3M', '1Y', 'ALL'];
+  const timeRanges: TimeRange[] = ['1D', '5D', '1M', '6M', '1Y', '5Y', 'ALL'];
 
   // Mobile Layout (Robinhood style)
   const mobileContent = (
@@ -1021,7 +1309,11 @@ export default function StockDetailContent({
           }}
         >
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-            <StockLogo symbol={symbol} name={stockName} size={{ xs: 40, sm: 48 }} />
+            <StockLogo
+              symbol={symbol}
+              name={stockName}
+              size={{ xs: 40, sm: 48 }}
+            />
             <Box>
               <Typography
                 sx={{
@@ -1179,14 +1471,16 @@ export default function StockDetailContent({
               >
                 {timeRange === '1D'
                   ? 'วันนี้'
-                  : timeRange === '1W'
-                  ? 'สัปดาห์นี้'
+                  : timeRange === '5D'
+                  ? '5 วัน'
                   : timeRange === '1M'
                   ? 'เดือนนี้'
-                  : timeRange === '3M'
-                  ? '3 เดือน'
+                  : timeRange === '6M'
+                  ? '6 เดือน'
                   : timeRange === '1Y'
                   ? 'ปีนี้'
+                  : timeRange === '5Y'
+                  ? '5 ปี'
                   : 'ทั้งหมด'}
               </Typography>
             </Box>
@@ -1224,7 +1518,7 @@ export default function StockDetailContent({
           sx={{
             position: 'relative',
             flex: 1,
-            minHeight: 220,
+            minHeight: 280, // เพิ่ม height เพื่อให้มีพื้นที่สำหรับ time scale + labels
           }}
         >
           <Box
@@ -1232,9 +1526,31 @@ export default function StockDetailContent({
             sx={{
               width: '100%',
               height: '100%',
-              minHeight: 220,
+              minHeight: 280,
+              pb: 1, // padding bottom สำหรับ time scale
             }}
           />
+
+          {/* Fullscreen Button - Mobile */}
+          <IconButton
+            onClick={() => setIsFullscreen(true)}
+            sx={{
+              position: 'absolute',
+              top: 8,
+              right: 8,
+              color: 'rgba(255,255,255,0.6)',
+              backgroundColor: 'rgba(0,0,0,0.5)',
+              backdropFilter: 'blur(4px)',
+              '&:hover': {
+                backgroundColor: 'rgba(99, 102, 241, 0.3)',
+                color: 'white',
+              },
+              zIndex: 5,
+            }}
+          >
+            <FullscreenIcon />
+          </IconButton>
+
           {chartLoading && (
             <Box
               sx={{
@@ -1529,7 +1845,11 @@ export default function StockDetailContent({
             </IconButton>
           </Tooltip>
 
-          <StockLogo symbol={symbol} name={stockName} size={{ xs: 48, sm: 56 }} />
+          <StockLogo
+            symbol={symbol}
+            name={stockName}
+            size={{ xs: 48, sm: 56 }}
+          />
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <Box
               sx={{
@@ -1759,14 +2079,16 @@ export default function StockDetailContent({
                     >
                       {timeRange === '1D'
                         ? 'วันนี้'
-                        : timeRange === '1W'
-                        ? 'สัปดาห์นี้'
+                        : timeRange === '5D'
+                        ? '5 วัน'
                         : timeRange === '1M'
                         ? 'เดือนนี้'
-                        : timeRange === '3M'
-                        ? '3 เดือน'
+                        : timeRange === '6M'
+                        ? '6 เดือน'
                         : timeRange === '1Y'
                         ? 'ปีนี้'
+                        : timeRange === '5Y'
+                        ? '5 ปี'
                         : 'ทั้งหมด'}
                     </Typography>
                   </Typography>
@@ -1914,13 +2236,27 @@ export default function StockDetailContent({
                 mb: 2,
               }}
             >
-              <Typography
-                variant="h6"
-                fontWeight={600}
-                sx={{ fontSize: { xs: '1rem', sm: '1.25rem' } }}
-              >
-                กราฟราคา
-              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Typography
+                  variant="h6"
+                  fontWeight={600}
+                  sx={{ fontSize: { xs: '1rem', sm: '1.25rem' } }}
+                >
+                  กราฟราคา
+                </Typography>
+                <Tooltip title="ดูเต็มจอ">
+                  <IconButton
+                    onClick={() => setIsFullscreen(true)}
+                    size="small"
+                    sx={{
+                      color: 'text.secondary',
+                      '&:hover': { color: '#6366f1' },
+                    }}
+                  >
+                    <FullscreenIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              </Box>
               <ButtonGroup
                 size="small"
                 variant="outlined"
@@ -2105,7 +2441,149 @@ export default function StockDetailContent({
     </Box>
   );
 
+  // Fullscreen Chart Modal
+  const fullscreenChart = (
+    <Box
+      sx={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 9999,
+        background: '#0a0a0a',
+        display: isFullscreen ? 'flex' : 'none',
+        flexDirection: 'column',
+      }}
+    >
+      {/* Fullscreen Header */}
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          px: 2,
+          py: 1.5,
+          borderBottom: '1px solid rgba(255,255,255,0.1)',
+        }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+          <StockLogo
+            symbol={symbol}
+            name={stockName}
+            size={{ xs: 36, sm: 40 }}
+          />
+          <Box>
+            <Typography
+              sx={{ color: '#6366f1', fontWeight: 700, fontSize: '1.25rem' }}
+            >
+              {symbol}
+            </Typography>
+            <Typography
+              sx={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.75rem' }}
+            >
+              {stockName}
+            </Typography>
+          </Box>
+        </Box>
+
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          {/* Price Display in Fullscreen */}
+          {stockData && (
+            <Box sx={{ textAlign: 'right', mr: 2 }}>
+              <Typography
+                sx={{ color: 'white', fontWeight: 700, fontSize: '1.5rem' }}
+              >
+                ${formatNumber(stockData.price)}
+              </Typography>
+              <Typography
+                sx={{
+                  color: periodIsPositive ? '#22c55e' : '#ef4444',
+                  fontWeight: 600,
+                  fontSize: '0.875rem',
+                }}
+              >
+                {periodIsPositive ? '+' : ''}
+                {formatNumber(periodChangePercent)}%
+              </Typography>
+            </Box>
+          )}
+          <IconButton
+            onClick={() => setIsFullscreen(false)}
+            sx={{
+              color: 'white',
+              backgroundColor: 'rgba(255,255,255,0.1)',
+              '&:hover': { backgroundColor: 'rgba(255,255,255,0.2)' },
+            }}
+          >
+            <CloseIcon />
+          </IconButton>
+        </Box>
+      </Box>
+
+      {/* Time Range Buttons - Fullscreen */}
+      <Box
+        sx={{
+          display: 'flex',
+          justifyContent: 'center',
+          gap: 1,
+          py: 1.5,
+          px: 2,
+          borderBottom: '1px solid rgba(255,255,255,0.05)',
+        }}
+      >
+        {timeRanges.map((range) => (
+          <Button
+            key={range}
+            onClick={() => setTimeRange(range)}
+            sx={{
+              minWidth: 50,
+              height: 32,
+              borderRadius: '16px',
+              fontSize: '0.8rem',
+              fontWeight: 600,
+              color: timeRange === range ? 'white' : 'rgba(255,255,255,0.5)',
+              backgroundColor: timeRange === range ? '#6366f1' : 'transparent',
+              border: 'none',
+              '&:hover': {
+                backgroundColor:
+                  timeRange === range ? '#6366f1' : 'rgba(255,255,255,0.1)',
+              },
+            }}
+          >
+            {range}
+          </Button>
+        ))}
+      </Box>
+
+      {/* Fullscreen Chart Container */}
+      <Box sx={{ flex: 1, position: 'relative' }}>
+        <Box
+          ref={fullscreenChartContainerRef}
+          sx={{
+            width: '100%',
+            height: '100%',
+          }}
+        />
+        {chartLoading && (
+          <Box
+            sx={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            }}
+          >
+            <CircularProgress sx={{ color: '#6366f1' }} />
+          </Box>
+        )}
+      </Box>
+    </Box>
+  );
+
   return (
-    <ThemeRegistry>{isMobile ? mobileContent : desktopContent}</ThemeRegistry>
+    <ThemeRegistry>
+      {isMobile ? mobileContent : desktopContent}
+      {fullscreenChart}
+    </ThemeRegistry>
   );
 }
