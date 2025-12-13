@@ -1600,8 +1600,8 @@ export default function StockDetailContent({
                     top: touchPosition.y,
                     transform: `translate(${translateX}, -100%)`,
                     background:
-                      'linear-gradient(135deg, rgba(144, 144, 144, 0.95) 0%, rgba(148, 148, 148, 0.95) 100%)',
-                    color: 'black',
+                      'linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.95) 100%)',
+                    color: 'white',
                     px: 1,
                     py: 0.4,
                     borderRadius: '5px',
@@ -2344,7 +2344,7 @@ export default function StockDetailContent({
                         top: touchPosition.y,
                         transform: `translate(${translateX}, -100%)`,
                         background:
-                          'linear-gradient(135deg, rgba(144, 144, 144, 0.95) 0%, rgba(148, 148, 148, 0.95) 100%)',
+                          'linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.95) 100%)',
                         color: 'black',
                         px: 1,
                         py: 0.4,
