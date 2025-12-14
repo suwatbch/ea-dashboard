@@ -559,7 +559,7 @@ export default function StockDetailContent({
             style: 3, // Dashed line
             width: 1,
             color: 'rgba(255, 255, 255, 0.3)',
-            labelBackgroundColor: '#6366f1',
+            labelBackgroundColor: '#ffffff',
           },
           horzLine: {
             visible: false, // Hide horizontal line
@@ -567,7 +567,7 @@ export default function StockDetailContent({
             style: 3,
             width: 1,
             color: 'rgba(255, 255, 255, 0.3)',
-            labelBackgroundColor: '#6366f1',
+            labelBackgroundColor: '#ffffff',
           },
         },
         handleScroll: false,
@@ -1112,7 +1112,7 @@ export default function StockDetailContent({
             style: 3,
             width: 1,
             color: 'rgba(255, 255, 255, 0.4)',
-            labelBackgroundColor: '#6366f1',
+            labelBackgroundColor: '#ffffff',
           },
           horzLine: {
             visible: true,
@@ -1120,7 +1120,7 @@ export default function StockDetailContent({
             style: 3,
             width: 1,
             color: 'rgba(255, 255, 255, 0.4)',
-            labelBackgroundColor: '#6366f1',
+            labelBackgroundColor: '#ffffff',
           },
         },
         handleScroll: true,
@@ -1626,7 +1626,7 @@ export default function StockDetailContent({
                     transform: `translate(${translateX}, -100%)`,
                     background:
                       'linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.95) 100%)',
-                    color: 'white',
+                    color: 'black',
                     px: 1,
                     py: 0.4,
                     borderRadius: '5px',
@@ -1683,14 +1683,15 @@ export default function StockDetailContent({
                     top: chartHeight - 25,
                     transform: `translateX(${translateX})`,
                     background:
-                      'linear-gradient(135deg, rgba(99, 102, 241, 0.95) 0%, rgba(107, 101, 233, 0.95) 100%)',
-                    color: 'white',
+                      'linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.95) 100%)',
+                    color: 'black',
                     px: 1,
                     py: 0.3,
                     borderRadius: '5px',
                     fontSize: '0.7rem',
                     fontWeight: 600,
-                    boxShadow: '0 2px 10px rgba(0,0,0,0.3)',
+                    boxShadow:
+                      '0 4px 20px rgba(99, 102, 241, 0.4), 0 0 0 1px rgba(255,255,255,0.1)',
                     pointerEvents: 'none',
                     zIndex: 10,
                     whiteSpace: 'nowrap',
@@ -2425,14 +2426,15 @@ export default function StockDetailContent({
                         top: chartHeight - 25,
                         transform: `translateX(${translateX})`,
                         background:
-                          'linear-gradient(135deg, rgba(99, 102, 241, 0.95) 0%, rgba(107, 101, 233, 0.95) 100%)',
-                        color: 'white',
+                          'linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.95) 100%)',
+                        color: 'black',
                         px: 1,
                         py: 0.3,
                         borderRadius: '5px',
                         fontSize: '0.7rem',
                         fontWeight: 600,
-                        boxShadow: '0 2px 10px rgba(0,0,0,0.3)',
+                        boxShadow:
+                          '0 4px 20px rgba(99, 102, 241, 0.4), 0 0 0 1px rgba(255,255,255,0.1)',
                         pointerEvents: 'none',
                         zIndex: 10,
                         whiteSpace: 'nowrap',
@@ -2606,6 +2608,26 @@ export default function StockDetailContent({
       </Box>
     </Box>
   );
+
+  // รอให้ mounted ก่อนค่อยแสดง content เพื่อป้องกัน Hydration Error
+  if (!mounted) {
+    return (
+      <ThemeRegistry>
+        <Box
+          sx={{
+            minHeight: '100dvh',
+            background:
+              'linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%)',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+          }}
+        >
+          <CircularProgress sx={{ color: '#e94560' }} />
+        </Box>
+      </ThemeRegistry>
+    );
+  }
 
   return (
     <ThemeRegistry>

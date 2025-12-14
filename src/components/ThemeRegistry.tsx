@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, ReactNode } from 'react';
+import { useEffect, useMemo, useState, ReactNode } from 'react';
 import { useServerInsertedHTML } from 'next/navigation';
 import { createTheme, ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
@@ -88,6 +88,16 @@ interface ThemeRegistryProps {
 
 export default function ThemeRegistry({ children }: ThemeRegistryProps) {
   const [cache] = useState(() => createEmotionCache());
+  const [mounted, setMounted] = useState(false);
+
+  // NOTE:
+  // On Next.js App Router + React 19, Emotion GlobalStyles (used by CssBaseline)
+  // can inject a <style data-emotion="mui-global ..."> during the first client render,
+  // which may not exist in the server HTML and can trigger a hydration mismatch,
+  // especially on Safari/iOS refresh. We delay CssBaseline until after mount.
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useServerInsertedHTML(() => {
     const names = Object.keys(cache.inserted);
@@ -115,7 +125,7 @@ export default function ThemeRegistry({ children }: ThemeRegistryProps) {
   return (
     <CacheProvider value={cache}>
       <ThemeProvider theme={memoizedTheme}>
-        <CssBaseline />
+        {mounted ? <CssBaseline /> : null}
         {children}
       </ThemeProvider>
     </CacheProvider>

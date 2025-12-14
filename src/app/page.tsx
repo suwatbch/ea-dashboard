@@ -1,5 +1,6 @@
 'use client';
 
+import { Suspense } from 'react';
 import dynamic from 'next/dynamic';
 
 const DashboardContent = dynamic(
@@ -8,5 +9,9 @@ const DashboardContent = dynamic(
 );
 
 export default function Home() {
-  return <DashboardContent />;
+  return (
+    <Suspense fallback={null}>
+      <DashboardContent />
+    </Suspense>
+  );
 }

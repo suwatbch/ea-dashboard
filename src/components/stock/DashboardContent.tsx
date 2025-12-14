@@ -69,7 +69,8 @@ import {
 import { useWatchlist } from '@/hooks/useWatchlist';
 import { SearchResult, WatchlistItem, StockQuote } from '@/types/stock';
 import { getThaiStockName, isThaiStock } from '@/data/thaiStocks';
-import ThemeRegistry from '../ThemeRegistry';
+// ThemeRegistry removed from here as it is already in layout
+
 import StockLogo from '../common/StockLogo';
 
 // ฟังก์ชันหาธงชาติจาก symbol
@@ -1148,5 +1149,5 @@ export default function DashboardContent() {
     </Box>
   );
 
-  return <ThemeRegistry>{content}</ThemeRegistry>;
+  return content;
 }
